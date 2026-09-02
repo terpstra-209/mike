@@ -30,7 +30,7 @@ import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextIn
 import { SettingsSection } from "../SettingsSection";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
-type ModelPreferenceField = "titleModel" | "tabularModel" | "reviewerModel";
+type ModelPreferenceField = "titleModel" | "tabularModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
@@ -146,37 +146,6 @@ export default function ModelPreferencesPage() {
                             emptyOptionLabel="No default model"
                             onChange={(id) =>
                                 handleModelChange("tabularModel", id)
-                            }
-                        />
-                    </div>
-                    <div className="px-4 py-5">
-                        <FieldLabel>Reviewer model</FieldLabel>
-                        <p className="text-xs text-gray-400 mb-2">
-                            Used for the optional second-opinion review after
-                            an answer drafts. Pick a different model than you
-                            use for chat — a model reviewing its own draft
-                            shares the same blind spots. Leave unset to skip
-                            the reviewer pass entirely.
-                        </p>
-                        <ModelPreferenceDropdown
-                            value={canonicalModelId(
-                                optimisticValues.reviewerModel ??
-                                    profile?.reviewerModel ??
-                                    "",
-                            )}
-                            options={[
-                                ...MODELS,
-                                ...selectedOpenRouterOptions,
-                                ...selectedVercelOptions,
-                                ...selectedOpenCodeGoOptions,
-                                ...ollamaModels,
-                            ]}
-                            apiKeys={profile?.apiKeys}
-                            isSaving={savingField === "reviewerModel"}
-                            isSaved={savedField === "reviewerModel"}
-                            emptyOptionLabel="No reviewer model — pass disabled"
-                            onChange={(id) =>
-                                handleModelChange("reviewerModel", id)
                             }
                         />
                     </div>

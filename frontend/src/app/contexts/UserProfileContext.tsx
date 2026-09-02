@@ -50,7 +50,6 @@ interface UserProfile {
     tier: string;
     titleModel: string | null;
     tabularModel: string | null;
-    reviewerModel: string | null;
     lastSelectedChatModel: string | null;
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
@@ -85,7 +84,7 @@ interface UserProfileContextType {
     ) => Promise<boolean>;
     syncPasswordSet: () => Promise<boolean>;
     updateModelPreference: (
-        field: "titleModel" | "tabularModel" | "reviewerModel",
+        field: "titleModel" | "tabularModel",
         value: string | null,
     ) => Promise<boolean>;
     persistChatModelSelection: (
@@ -226,7 +225,6 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 tier: "Free",
                 titleModel: null,
                 tabularModel: null,
-                reviewerModel: null,
                 lastSelectedChatModel: null,
                 lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
@@ -339,7 +337,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
 
     const updateModelPreference = useCallback(
         async (
-            field: "titleModel" | "tabularModel" | "reviewerModel",
+            field: "titleModel" | "tabularModel",
             value: string | null,
         ): Promise<boolean> => {
             if (!user) return false;

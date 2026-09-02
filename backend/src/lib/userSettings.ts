@@ -15,8 +15,6 @@ export type UserModelSettings = {
     title_model: string | null;
     /** Default for new reviews only; each review stores its own model. */
     tabular_model: string | null;
-    /** Model for the optional post-draft critique pass; null disables it. */
-    reviewer_model: string | null;
     /** Cross-surface fallback used only when a chat has no usable model. */
     last_selected_chat_model: string | null;
     /** Cross-surface fallback used only when a chat has no saved level. */
@@ -42,7 +40,7 @@ export async function getUserModelSettings(
         client
             .from("user_profiles")
             .select(
-                "title_model, tabular_model, reviewer_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
+                "title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
             )
             .eq("user_id", userId)
             .single(),
@@ -96,10 +94,6 @@ export async function getUserModelSettings(
         ),
         tabular_model: normalizeOptionalModelPreference(
             data?.tabular_model,
-            routerModels,
-        ),
-        reviewer_model: normalizeOptionalModelPreference(
-            data?.reviewer_model,
             routerModels,
         ),
         last_selected_chat_model: normalizeOptionalModelPreference(

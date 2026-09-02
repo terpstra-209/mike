@@ -512,7 +512,6 @@ export interface UserProfile {
     tier: string;
     titleModel: string | null;
     tabularModel: string | null;
-    reviewerModel: string | null;
     lastSelectedChatModel: string | null;
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
@@ -628,7 +627,6 @@ export async function updateUserProfile(payload: {
     practiceAreas?: string[];
     titleModel?: string | null;
     tabularModel?: string | null;
-    reviewerModel?: string | null;
     lastSelectedChatModel?: string | null;
     lastSelectedReasoningLevel?: NonNullable<Message["reasoning"]>;
     legalResearchUs?: boolean;
@@ -1672,7 +1670,6 @@ export async function streamChat(payload: {
     project_id?: string;
     model?: string;
     reasoning?: Message["reasoning"];
-    reviewerEnabled?: boolean;
     ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
@@ -1701,7 +1698,6 @@ export async function streamProjectChat(payload: {
     chat_id?: string;
     model?: string;
     reasoning?: Message["reasoning"];
-    reviewerEnabled?: boolean;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     ask_inputs_response?: AskInputsResponsePayload;

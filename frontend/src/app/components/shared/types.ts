@@ -304,15 +304,7 @@ export type AssistantEvent =
           cluster_id: number;
           document?: PanelDocument;
       }
-    | { type: "content"; text: string; isStreaming?: boolean }
-    | {
-          type: "reviewer_note";
-          persona_id: string;
-          persona_label: string;
-          text?: string;
-          skipped?: true;
-          reason?: string;
-      };
+    | { type: "content"; text: string; isStreaming?: boolean };
 
 export type CaseCitationQuote = {
     opinionId: number | null;
@@ -330,7 +322,6 @@ export interface Message {
     workflow?: { id: string; title: string };
     model?: string;
     reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
-    reviewerEnabled?: boolean;
     citations?: Citation[];
     citationStatus?: "started" | "partial" | "final";
     events?: AssistantEvent[];

@@ -505,7 +505,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const project_id = parsedProjectId.value.projectId;
     const model = parsedModel.value;
     const askInputsResponse = parsedAskInputsResponse.value;
-    const reviewerEnabled = body.reviewerEnabled === true;
     // Reserve a stable assistant identity before streaming. This lets clients
     // associate streamed UI with the same durable message after a reload.
     const assistantMessageId = askInputsResponse ? null : randomUUID();
@@ -667,7 +666,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
         title_model: titleModel,
-        reviewer_model: reviewerModel,
         personalisation,
     } = modelSettings;
     const personalisationPrompt = buildUserPersonalisationPrompt(
@@ -790,8 +788,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             signal: stream.signal,
             projectId: resolvedProjectId,
             nonce,
-            reviewerEnabled,
-            reviewerModel,
             // This route first makes the advertised assistant ID durable.
             // It emits [DONE] only after the reserved row has been populated.
             emitDone: false,

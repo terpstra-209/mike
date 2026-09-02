@@ -158,10 +158,7 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.text).toContain('"type":"chat_title"');
         expect(runLLMStream).toHaveBeenCalledTimes(1);
         expect(runLLMStream).toHaveBeenCalledWith(
-            expect.objectContaining({
-                emitDone: false,
-                reviewerEnabled: false,
-            }),
+            expect.objectContaining({ emitDone: false }),
         );
         const systemPromptExtra = buildMessages.mock.calls[0]?.[2] as string;
         expect(systemPromptExtra).toContain("USER PERSONALISATION");
@@ -186,30 +183,6 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.status).toBe(200);
         expect(runLLMStream).toHaveBeenCalledWith(
             expect.objectContaining({ model: "gpt-5.6-luna" }),
-        );
-    });
-
-    it("passes reviewerEnabled and the profile's reviewer_model through to runLLMStream", async () => {
-        const userSettings = await import("../../lib/userSettings");
-        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
-            legal_research_us: false,
-            title_model: "test-model",
-            tabular_model: "test-model",
-            reviewer_model: "reviewer-test-model",
-            last_selected_chat_model: null,
-            api_keys: { gemini: "test-key" },
-        } as never);
-
-        await request(app)
-            .post("/projects/p1/chat")
-            .set("Authorization", "Bearer test")
-            .send({ ...VALID_BODY, reviewerEnabled: true });
-
-        expect(runLLMStream).toHaveBeenCalledWith(
-            expect.objectContaining({
-                reviewerEnabled: true,
-                reviewerModel: "reviewer-test-model",
-            }),
         );
     });
 

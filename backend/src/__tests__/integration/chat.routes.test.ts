@@ -307,10 +307,7 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.text).toContain('"type":"chat_title"');
         expect(runLLMStream).toHaveBeenCalledTimes(1);
         expect(runLLMStream).toHaveBeenCalledWith(
-            expect.objectContaining({
-                emitDone: false,
-                reviewerEnabled: false,
-            }),
+            expect.objectContaining({ emitDone: false }),
         );
         const systemPromptExtra = vi.mocked(chatLib.buildMessages).mock
             .calls[0]?.[2] as string;
@@ -348,37 +345,6 @@ describe("POST /chat — streaming endpoint", () => {
                 { column: "id", value: metadata.assistantMessageId },
                 { column: "chat_id", value: metadata.chatId },
             ]),
-        );
-    });
-
-    it("passes reviewerEnabled and the profile's reviewer_model through to runLLMStream", async () => {
-        vi.mocked(
-            (await import("../../lib/userSettings")).getUserModelSettings,
-        ).mockResolvedValueOnce({
-            legal_research_us: false,
-            title_model: "test-model",
-            tabular_model: "test-model",
-            reviewer_model: "reviewer-test-model",
-            last_selected_chat_model: null,
-            last_selected_reasoning_level: null,
-            api_keys: { gemini: "test-key" },
-        } as never);
-        runLLMStream.mockResolvedValue({
-            fullText: "hi there",
-            events: [],
-            citations: [],
-        });
-
-        await request(app)
-            .post("/chat")
-            .set("Authorization", "Bearer test")
-            .send({ ...VALID_BODY, reviewerEnabled: true });
-
-        expect(runLLMStream).toHaveBeenCalledWith(
-            expect.objectContaining({
-                reviewerEnabled: true,
-                reviewerModel: "reviewer-test-model",
-            }),
         );
     });
 
