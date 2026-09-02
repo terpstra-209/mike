@@ -28,6 +28,7 @@ import {
     DocReplicatedBlock,
     EventBlock,
     ReasoningBlock,
+    ReviewerNoteBlock,
     WorkflowAppliedBlock,
     type CourtListenerBlockItem,
 } from "./message/EventBlocks";
@@ -560,6 +561,18 @@ export function AssistantMessage({
                             ? () => onWorkflowClick(event.workflow_id)
                             : undefined
                     }
+                />
+            );
+        }
+        if (event.type === "reviewer_note") {
+            return (
+                <ReviewerNoteBlock
+                    key={globalIdx}
+                    personaLabel={event.persona_label}
+                    text={event.text}
+                    skipped={event.skipped}
+                    reason={event.reason}
+                    showConnector={showConnector}
                 />
             );
         }

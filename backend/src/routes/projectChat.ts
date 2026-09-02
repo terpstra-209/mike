@@ -93,6 +93,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             .status(400)
             .json({ detail: parsedAskInputsResponse.detail });
     }
+    const reviewerEnabled = body.reviewerEnabled === true;
 
     const messages = parsedMessages.value;
     const chat_id = parsedChatId.value;
@@ -286,6 +287,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
         title_model: titleModel,
+        reviewer_model: reviewerModel,
         personalisation,
     } = modelSettings;
     const personalisationPrompt = buildUserPersonalisationPrompt(
@@ -380,6 +382,8 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             signal: streamAbort.signal,
             projectId,
             nonce,
+            reviewerEnabled,
+            reviewerModel,
             emitDone: false,
         });
 

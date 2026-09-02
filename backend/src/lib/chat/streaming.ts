@@ -44,6 +44,7 @@ import {
   type TurnReadState,
 } from "./tools/documentOps";
 import { verifyCitations } from "./verifyCitations";
+import { runReviewerPass } from "./reviewerPass";
 
 export type AssistantEvent =
   | { type: "reasoning"; text: string }
@@ -124,6 +125,14 @@ export type AssistantEvent =
       formats: string[];
       occurrence: "all" | null;
       reason: string | null;
+    }
+  | {
+      type: "reviewer_note";
+      persona_id: string;
+      persona_label: string;
+      text?: string;
+      skipped?: true;
+      reason?: string;
     }
   | { type: "error"; message: string; safe_to_display?: boolean };
 
@@ -235,6 +244,9 @@ export async function runLLMStream(params: {
   maxIterations?: number;
   buildCitations?: (fullText: string) => unknown[];
   model?: string;
+  /** Optional second-model critique pass, run after citations verify. */
+  reviewerEnabled?: boolean;
+  reviewerModel?: string | null;
   /** AI SDK reasoning effort for this interactive request. */
   reasoning?: import("../llm").ReasoningLevel;
   apiKeys?: import("../llm").UserApiKeys;
@@ -271,6 +283,8 @@ export async function runLLMStream(params: {
     clientTools,
     buildCitations,
     model,
+    reviewerEnabled,
+    reviewerModel,
     apiKeys,
     signal,
     projectId,
@@ -746,6 +760,32 @@ export async function runLLMStream(params: {
   write(
     `data: ${JSON.stringify({ type: "citations", status: "final", citations })}\n\n`,
   );
+
+  if (reviewerEnabled) {
+    const review = await runReviewerPass({
+      draftText: fullText,
+      citations,
+      model: reviewerModel ?? null,
+      apiKeys,
+    });
+    const reviewerEvent: AssistantEvent = review.ok
+      ? {
+          type: "reviewer_note",
+          persona_id: review.personaId,
+          persona_label: review.personaLabel,
+          text: review.text,
+        }
+      : {
+          type: "reviewer_note",
+          persona_id: review.personaId,
+          persona_label: review.personaLabel,
+          skipped: true,
+          reason: review.reason,
+        };
+    events.push(reviewerEvent);
+    write(`data: ${JSON.stringify(reviewerEvent)}\n\n`);
+  }
+
   if (params.emitDone !== false) {
     write("data: [DONE]\n\n");
   }

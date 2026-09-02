@@ -13,6 +13,7 @@ import {
     Check,
     Library,
     Loader2,
+    ShieldCheck,
     Square,
     Waypoints,
     X,
@@ -163,6 +164,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [noModelsWarning, setNoModelsWarning] =
         useState<NoModelsReason | null>(null);
     const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
+    // Per-turn only, off by default — no persisted preference yet since
+    // there's nothing to remember with a single reviewer persona.
+    const [reviewerEnabled, setReviewerEnabled] = useState(false);
     const [reasoningLevel, setReasoningLevel] = useSelectedReasoning({
         selectionKey: chatKey,
         chatReasoningLevel,
@@ -474,6 +478,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             workflow: workflow ?? undefined,
             model,
             reasoning: reasoningLevel,
+            reviewerEnabled,
         });
     };
 
@@ -724,6 +729,36 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         </div>
 
                         <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setReviewerEnabled((prev) => !prev)
+                                }
+                                aria-pressed={reviewerEnabled}
+                                aria-label={
+                                    reviewerEnabled
+                                        ? "Disable reviewer pass for this message"
+                                        : "Enable reviewer pass for this message"
+                                }
+                                title="Run a second-opinion review after the answer"
+                                className={cn(
+                                    "flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors",
+                                    reviewerEnabled
+                                        ? "text-blue-600 hover:text-blue-700"
+                                        : "text-gray-400 hover:text-gray-700",
+                                )}
+                            >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                <span
+                                    className={
+                                        compactControls
+                                            ? "hidden"
+                                            : "hidden sm:inline"
+                                    }
+                                >
+                                    Reviewer
+                                </span>
+                            </button>
                             {!chatSettingsLoading && (
                                 <ModelToggle
                                     value={model}

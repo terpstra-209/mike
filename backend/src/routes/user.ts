@@ -82,6 +82,7 @@ type UserProfileRow = {
     tier: string;
     title_model: string | null;
     tabular_model: string | null;
+    reviewer_model?: string | null;
     last_selected_chat_model?: string | null;
     last_selected_reasoning_level?: string | null;
     mfa_on_login: boolean | null;
@@ -200,8 +201,13 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, reviewer_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
+// PROFILE_SELECT_WITH_CHAT_SELECTIONS minus transparent_tables, the newest
+// column — a database missing only that keeps reviewer_model, which predates it.
 const PROFILE_SELECT_NO_TRANSPARENT_TABLES =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, reviewer_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+// The above minus reviewer_model too, for a database missing both new columns.
+const PROFILE_SELECT_NO_REVIEWER_MODEL =
     "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
     "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
@@ -292,6 +298,26 @@ async function selectProfile(
             return previous;
         }
         cascadeError = previous.error;
+    }
+
+    if (isMissingProfileColumn(cascadeError, "reviewer_model")) {
+        const noReviewerQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_REVIEWER_MODEL)
+            .eq("user_id", userId);
+        const noReviewer =
+            mode === "single"
+                ? await noReviewerQuery.single()
+                : await noReviewerQuery.maybeSingle();
+        if (!noReviewer.error) {
+            if (noReviewer.data && typeof noReviewer.data === "object") {
+                Object.assign(noReviewer.data as Record<string, unknown>, {
+                    reviewer_model: null,
+                });
+            }
+            return noReviewer;
+        }
+        cascadeError = noReviewer.error;
     }
 
     if (isMissingProfileColumn(cascadeError, "last_selected_reasoning_level")) {
@@ -607,6 +633,10 @@ function serializeProfile(
             row.tabular_model,
             routerModels,
         ),
+        reviewerModel: normalizeOptionalModelPreference(
+            row.reviewer_model,
+            routerModels,
+        ),
         lastSelectedChatModel: normalizeOptionalModelPreference(
             row.last_selected_chat_model,
             routerModels,
@@ -774,6 +804,7 @@ function validateProfilePayload(body: unknown):
               practice_areas?: string[];
               title_model?: string | null;
               tabular_model?: string | null;
+              reviewer_model?: string | null;
               last_selected_chat_model?: string | null;
               last_selected_reasoning_level?: string | null;
               legal_research_us?: boolean;
@@ -797,6 +828,7 @@ function validateProfilePayload(body: unknown):
         "practiceAreas",
         "titleModel",
         "tabularModel",
+        "reviewerModel",
         "lastSelectedChatModel",
         "lastSelectedReasoningLevel",
         "legalResearchUs",
@@ -824,6 +856,7 @@ function validateProfilePayload(body: unknown):
         practice_areas?: string[];
         title_model?: string | null;
         tabular_model?: string | null;
+        reviewer_model?: string | null;
         last_selected_chat_model?: string | null;
         last_selected_reasoning_level?: string | null;
         legal_research_us?: boolean;
@@ -882,6 +915,23 @@ function validateProfilePayload(body: unknown):
                 return { ok: false, detail: "Unsupported tabularModel" };
             }
             update.tabular_model = resolved;
+        }
+    }
+
+    if ("reviewerModel" in raw) {
+        if (raw.reviewerModel === null || raw.reviewerModel === "") {
+            update.reviewer_model = null;
+        } else if (typeof raw.reviewerModel !== "string") {
+            return {
+                ok: false,
+                detail: "reviewerModel must be a string or null",
+            };
+        } else {
+            const resolved = resolveModel(raw.reviewerModel, "");
+            if (!resolved) {
+                return { ok: false, detail: "Unsupported reviewerModel" };
+            }
+            update.reviewer_model = resolved;
         }
     }
 

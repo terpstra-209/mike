@@ -45,6 +45,7 @@ create table if not exists public.user_profiles (
   credits_reset_date timestamptz not null default (now() + interval '30 days'),
   title_model text,
   tabular_model text,
+  reviewer_model text,
   last_selected_chat_model text,
   last_selected_reasoning_level text check (last_selected_reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   quote_model text,

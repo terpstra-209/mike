@@ -534,6 +534,53 @@ export function WorkflowAppliedBlock({
     );
 }
 
+const SKIP_REASON_LABELS: Record<string, string> = {
+    no_model_configured:
+        "no reviewer model configured in Settings → Model Preferences",
+    provider_error: "the reviewer model failed to respond",
+    empty_response: "the reviewer model returned an empty response",
+    unknown_persona: "an unknown reviewer persona was requested",
+};
+
+export function ReviewerNoteBlock({
+    personaLabel,
+    text,
+    skipped,
+    reason,
+    showConnector,
+}: {
+    personaLabel: string;
+    text?: string;
+    skipped?: boolean;
+    reason?: string;
+    showConnector?: boolean;
+}) {
+    if (skipped) {
+        return (
+            <EventBlock showConnector={showConnector} dotColor="gray">
+                <span className="italic text-gray-400">
+                    {personaLabel} skipped
+                    {reason && (SKIP_REASON_LABELS[reason] ?? reason)
+                        ? ` — ${SKIP_REASON_LABELS[reason] ?? reason}`
+                        : ""}
+                </span>
+            </EventBlock>
+        );
+    }
+    return (
+        <EventBlock showConnector={showConnector} dotColor="green">
+            <span className="font-medium">{personaLabel}</span>
+            {text && (
+                <div className="mt-1 prose prose-sm max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {text}
+                    </ReactMarkdown>
+                </div>
+            )}
+        </EventBlock>
+    );
+}
+
 export function AskInputsBlock({
     event,
     response,

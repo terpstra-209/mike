@@ -336,6 +336,7 @@ export function useAssistantChat({
 
       const model = message.model;
       const reasoning = message.reasoning;
+      const reviewerEnabled = message.reviewerEnabled;
 
       const displayedDoc = opts?.displayedDoc ?? null;
 
@@ -358,6 +359,7 @@ export function useAssistantChat({
             chat_id: chatId,
             model,
             reasoning,
+            reviewerEnabled,
             displayed_doc: displayedDoc
               ? {
                   filename: displayedDoc.filename,
@@ -374,6 +376,7 @@ export function useAssistantChat({
             chat_id: chatId,
             model,
             reasoning,
+            reviewerEnabled,
             ask_inputs_response: opts?.askInputsResponse,
             signal: controller.signal,
           }));
@@ -586,6 +589,18 @@ export function useAssistantChat({
                 type: "workflow_applied",
                 workflow_id: data.workflow_id as string,
                 title: data.title as string,
+              });
+              continue;
+            }
+
+            if (data.type === "reviewer_note") {
+              pushEvent({
+                type: "reviewer_note",
+                persona_id: data.persona_id as string,
+                persona_label: data.persona_label as string,
+                text: data.text as string | undefined,
+                skipped: data.skipped as true | undefined,
+                reason: data.reason as string | undefined,
               });
               continue;
             }
