@@ -204,6 +204,49 @@ function normalizeToolInput(input: unknown): Record<string, unknown> {
     : {};
 }
 
+/**
+ * Google rejects the whole request when an array parameter omits `items`;
+ * every other provider ignores the gap. MCP servers ship such schemas
+ * routinely, so fill it here — the one place every tool schema passes
+ * through — instead of trusting each server to be well-formed.
+ */
+export function normalizeToolParameters(schema: unknown, key = ""): unknown {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return schema;
+  }
+  const next = { ...(schema as Record<string, unknown>) };
+
+  const properties = next.properties;
+  if (
+    properties &&
+    typeof properties === "object" &&
+    !Array.isArray(properties)
+  ) {
+    next.properties = Object.fromEntries(
+      Object.entries(properties as Record<string, unknown>).map(
+        ([name, sub]) => [name, normalizeToolParameters(sub, name)],
+      ),
+    );
+  }
+  if (next.items) next.items = normalizeToolParameters(next.items, key);
+  for (const branch of ["anyOf", "oneOf", "allOf"] as const) {
+    if (Array.isArray(next[branch])) {
+      next[branch] = (next[branch] as unknown[]).map((entry) =>
+        normalizeToolParameters(entry, key),
+      );
+    }
+  }
+
+  if (next.type === "array" && !next.items) {
+    // ponytail: guess the element type from the property name. Correct for
+    // every schema seen so far (`*_ids` numeric, everything else string). If
+    // a server ships a numeric array under another name, read its real item
+    // type from the MCP tool listing rather than widening this rule.
+    next.items = { type: /ids$/i.test(key) ? "integer" : "string" };
+  }
+  return next;
+}
+
 function toAiSdkTools(
   schemas: OpenAIToolSchema[],
   runTools?: StreamChatParams["runTools"],
@@ -218,7 +261,7 @@ function toAiSdkTools(
       const definition = {
         description: schema.function.description,
         inputSchema: sdk.jsonSchema<Record<string, unknown>>(
-          schema.function.parameters as never,
+          normalizeToolParameters(schema.function.parameters) as never,
         ),
         ...(batcher
           ? {
