@@ -71,6 +71,11 @@ describe("tool ownership", () => {
   });
 });
 
+/** Per-row rejections, or [] if the whole call failed instead. */
+function rejectionsOf(parsed: ReturnType<typeof parseWordEditsInput>) {
+  return parsed.ok ? parsed.rejected : [];
+}
+
 describe("parseWordEditsInput", () => {
   it("accepts a well-formed batch and trims the reason", () => {
     const parsed = parseWordEditsInput({
@@ -79,7 +84,31 @@ describe("parseWordEditsInput", () => {
     expect(parsed).toEqual({
       ok: true,
       edits: [{ original: "teh", replacement: "the", reason: "Typo." }],
+      accepted: [0],
+      rejected: [],
     });
+  });
+
+  it("keeps the good edits when one row in the batch is bad", () => {
+    // One malformed row used to discard the whole batch, which made a large
+    // batch expensive enough to attempt that a model would burn its output
+    // budget pre-verifying every row instead of sending the call.
+    const parsed = parseWordEditsInput({
+      edits: [
+        { original: "teh", replacement: "the", reason: "Typo." },
+        { original: "x".repeat(201), replacement: "y" },
+        { original: "recieve", replacement: "receive", reason: "Typo." },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.edits).toHaveLength(2);
+    // The surviving rows keep the caller's own numbering, so the model can
+    // tell which of its edits to resend.
+    expect(parsed.accepted).toEqual([0, 2]);
+    expect(parsed.rejected).toHaveLength(1);
+    expect(parsed.rejected[0]?.index).toBe(1);
+    expect(parsed.rejected[0]?.error).toMatch(/at most 200/);
   });
 
   it("accepts a formatting edit and dedupes its formats", () => {
@@ -102,6 +131,8 @@ describe("parseWordEditsInput", () => {
           reason: "Promote to a heading.",
         },
       ],
+      accepted: [0],
+      rejected: [],
     });
   });
 
@@ -109,22 +140,26 @@ describe("parseWordEditsInput", () => {
     const both = parseWordEditsInput({
       edits: [{ original: "a", replacement: "b", formats: ["bold"] }],
     });
-    expect(both.ok).toBe(false);
+    expect(rejectionsOf(both)).toHaveLength(1);
     const neither = parseWordEditsInput({ edits: [{ original: "a" }] });
-    expect(neither.ok).toBe(false);
+    expect(rejectionsOf(neither)).toHaveLength(1);
   });
 
   it("rejects an unsupported format and a bogus occurrence", () => {
     expect(
-      parseWordEditsInput({
-        edits: [{ original: "a", formats: ["strikethrough"] }],
-      }).ok,
-    ).toBe(false);
+      rejectionsOf(
+        parseWordEditsInput({
+          edits: [{ original: "a", formats: ["strikethrough"] }],
+        }),
+      ),
+    ).toHaveLength(1);
     expect(
-      parseWordEditsInput({
-        edits: [{ original: "a", replacement: "b", occurrence: "first" }],
-      }).ok,
-    ).toBe(false);
+      rejectionsOf(
+        parseWordEditsInput({
+          edits: [{ original: "a", replacement: "b", occurrence: "first" }],
+        }),
+      ),
+    ).toHaveLength(1);
   });
 
   it("carries an explicit replace-all through", () => {
@@ -147,8 +182,8 @@ describe("parseWordEditsInput", () => {
     const parsed = parseWordEditsInput({
       edits: [{ original: "x".repeat(201), replacement: "y" }],
     });
-    expect(parsed.ok).toBe(false);
-    expect(parsed.ok === false && parsed.error).toMatch(/at most 200/);
+    expect(parsed.ok === true && parsed.edits).toEqual([]);
+    expect(rejectionsOf(parsed)[0]?.error).toMatch(/at most 200/);
   });
 
   it("rejects more edits than one call may carry", () => {
@@ -366,6 +401,51 @@ describe("createWordClientToolsAdapter", () => {
     ]);
   });
 
+  it("applies the good edits around a bad row and reports it at its own index", async () => {
+    const { frames, write } = collectSse();
+    const adapter = createWordClientToolsAdapter({ userId: "u1", write });
+    const execution = adapter.execute({
+      id: "t1",
+      name: APPLY_WORD_EDITS_TOOL_NAME,
+      input: {
+        edits: [
+          { original: "teh", replacement: "the", reason: "Fix typo" },
+          { original: "x".repeat(201), replacement: "y", reason: "Too long" },
+          { original: "recieve", replacement: "receive", reason: "Fix typo" },
+        ],
+      },
+    });
+    const frame = lastToolCallFrame(frames);
+    // The bad row never reaches the pane, so it gets no card and no ordinal.
+    const input = frame.input as { edits: { original: string }[] };
+    expect(input.edits.map((e) => e.original)).toEqual(["teh", "recieve"]);
+
+    // The pane numbers its rows against what it was sent, 0 and 1.
+    submitClientToolResult(frame.tool_call_id as string, "u1", {
+      edits: [
+        { index: 0, status: "applied" },
+        { index: 1, status: "not-found", matches: 0 },
+      ],
+    });
+    const { content } = await execution;
+    const parsed = JSON.parse(content) as {
+      applied: number;
+      failed: number;
+      edits: { index: number; status: string; error?: string }[];
+    };
+    expect(parsed.applied).toBe(1);
+    // The rejected row and the not-found row, both failures.
+    expect(parsed.failed).toBe(2);
+    // Renumbered back to the model's own indices: 1 is the row it must fix,
+    // 2 is the one Word could not find. Reporting these as 0 and 1 would
+    // send the model to correct the wrong edits.
+    expect(parsed.edits.map((e) => [e.index, e.status])).toEqual([
+      [1, "error"],
+      [2, "not-found"],
+    ]);
+    expect(parsed.edits[0]?.error).toMatch(/at most 200/);
+  });
+
   it("continues the ordinal count across sequential calls, and not across rejected ones", async () => {
     const { frames, write } = collectSse();
     const adapter = createWordClientToolsAdapter({ userId: "u1", write });
@@ -467,14 +547,14 @@ describe("hardening: unconfirmed outcomes and unsearchable input", () => {
     const lineBreak = parseWordEditsInput({
       edits: [{ original: "one\ntwo", replacement: "x", reason: "r" }],
     });
-    expect(lineBreak.ok).toBe(false);
-    expect(lineBreak.ok === false && lineBreak.error).toMatch(/line break/);
+    expect(lineBreak.ok === true && lineBreak.edits).toEqual([]);
+    expect(rejectionsOf(lineBreak)[0]?.error).toMatch(/line break/);
 
     const caret = parseWordEditsInput({
       edits: [{ original: "a ^ b", replacement: "x", reason: "r" }],
     });
-    expect(caret.ok).toBe(false);
-    expect(caret.ok === false && caret.error).toMatch(/cannot match literally/);
+    expect(caret.ok === true && caret.edits).toEqual([]);
+    expect(rejectionsOf(caret)[0]?.error).toMatch(/cannot match literally/);
   });
 
   it("maps a bridge timeout to unknown, not failed", () => {

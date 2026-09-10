@@ -110,7 +110,9 @@ export const WORD_CLIENT_TOOLS: OpenAIToolSchema[] = [
         "not succeed: not-found means the original text does not appear " +
         "verbatim, ambiguous means it appears more than once. Fix the " +
         "original text (re-read the document if needed) and retry only the " +
-        "failed edits.",
+        "failed edits. A rejected or failed edit never blocks the others in " +
+        "the same call, so send your best attempt and correct what comes " +
+        "back rather than verifying each row by hand first.",
       parameters: {
         type: "object",
         properties: {
@@ -133,14 +135,19 @@ export const WORD_CLIENT_TOOLS: OpenAIToolSchema[] = [
                     "contiguous passage in a single paragraph of the active " +
                     "document. Preserve capitalization, punctuation, and " +
                     "spacing. Keep it at most 200 characters and unique in " +
-                    "the document.",
+                    "the document. Do not count characters by hand: an " +
+                    "over-length original is rejected on its own, and you " +
+                    "resend just that change as consecutive smaller edits.",
                 },
                 replacement: {
                   type: "string",
                   maxLength: MAX_REPLACEMENT_CHARS,
                   description:
                     "Text to put in its place. Empty string deletes the " +
-                    "passage. Send exactly one of replacement or formats.",
+                    "passage. A newline starts a new paragraph, so one edit " +
+                    "can insert several paragraphs even though the original " +
+                    "it replaces sits inside one. Send exactly one of " +
+                    "replacement or formats.",
                 },
                 formats: {
                   type: "array",
@@ -327,14 +334,143 @@ export function submitClientToolResult(
 // Input/result normalization
 // ---------------------------------------------------------------------------
 
+/** One edit rejected before it reached Word, at its index in the call. */
+export type RejectedWordEdit = { index: number; error: string };
+
 /**
- * Validate one apply_word_edits input. Bad input fails fast HERE, with an
- * actionable message, instead of round-tripping to Word only to come back as
- * an unexplained skip.
+ * Validate one row. Bad input fails HERE, with an actionable message, instead
+ * of round-tripping to Word only to come back as an unexplained skip.
+ */
+function parseWordEditRow(
+  raw: unknown,
+  index: number,
+): { ok: true; edit: WordEditRequest } | { ok: false; error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: `edits[${index}] must be an object` };
+  }
+  const row = raw as Record<string, unknown>;
+  if (typeof row.original !== "string" || row.original.length === 0) {
+    return {
+      ok: false,
+      error: `edits[${index}].original must be a non-empty string`,
+    };
+  }
+  // Word's search API cannot match across paragraph breaks and treats ^ as
+  // a wildcard escape — such originals would round-trip to the pane only to
+  // come back as an unexplained skip. Fail with the reason instead.
+  if (/[\n\r]/.test(row.original)) {
+    return {
+      ok: false,
+      error:
+        `edits[${index}].original contains a line break. Each original ` +
+        "must be one contiguous passage within a single paragraph; split " +
+        "the change into one edit per paragraph.",
+    };
+  }
+  if (row.original.includes("^")) {
+    return {
+      ok: false,
+      error:
+        `edits[${index}].original contains "^", which Word's search ` +
+        "cannot match literally. Choose a nearby passage without it.",
+    };
+  }
+  if (row.original.length > MAX_ORIGINAL_CHARS) {
+    return {
+      ok: false,
+      error:
+        `edits[${index}].original is ${row.original.length} characters; ` +
+        `keep each original at most ${MAX_ORIGINAL_CHARS}. Split this one ` +
+        "change into consecutive smaller edits and resend only this row.",
+    };
+  }
+  // Exactly one of the two change kinds, mirroring the <EDITS> row rule.
+  // A row carrying both is ambiguous about what the card should show; a row
+  // carrying neither is a no-op the pane would silently drop.
+  const hasFormats = Array.isArray(row.formats) && row.formats.length > 0;
+  const hasReplacement = typeof row.replacement === "string";
+  if (hasFormats === hasReplacement) {
+    return {
+      ok: false,
+      error:
+        `edits[${index}] must carry exactly one of "replacement" (text to ` +
+        'put in place, "" to delete) or "formats" (a non-empty list of ' +
+        "formats to apply).",
+    };
+  }
+  let formats: string[] | undefined;
+  if (hasFormats) {
+    const rawFormats = row.formats as unknown[];
+    if (
+      rawFormats.some(
+        (format) =>
+          typeof format !== "string" || !WORD_EDIT_FORMATS.has(format),
+      )
+    ) {
+      return {
+        ok: false,
+        error:
+          `edits[${index}].formats may only contain ` +
+          `${[...WORD_EDIT_FORMATS].join(", ")}.`,
+      };
+    }
+    formats = [...new Set(rawFormats as string[])];
+  } else if ((row.replacement as string).length > MAX_REPLACEMENT_CHARS) {
+    return {
+      ok: false,
+      error: `edits[${index}].replacement exceeds ${MAX_REPLACEMENT_CHARS} characters`,
+    };
+  }
+  if (
+    row.occurrence !== undefined &&
+    row.occurrence !== null &&
+    row.occurrence !== "all"
+  ) {
+    return {
+      ok: false,
+      error: `edits[${index}].occurrence must be "all" or omitted`,
+    };
+  }
+  const reason =
+    typeof row.reason === "string" && row.reason.trim()
+      ? row.reason.trim().slice(0, MAX_REASON_CHARS)
+      : undefined;
+  return {
+    ok: true,
+    edit: {
+      original: row.original,
+      replacement: hasReplacement ? (row.replacement as string) : "",
+      ...(formats ? { formats } : {}),
+      ...(row.occurrence === "all" ? { occurrence: "all" as const } : {}),
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
+/**
+ * Validate one apply_word_edits input.
+ *
+ * A malformed row fails on its own: it is reported back at its own index and
+ * the rest of the batch still goes to Word. Rejecting the whole call over one
+ * row is what made a large batch expensive to attempt, and a model that
+ * cannot afford a rejection spends its output budget pre-verifying every row
+ * — long enough, on a thinking model, to exhaust the budget before it emits
+ * the call at all. Only whole-call problems (a missing array, a batch over
+ * the hard limit) can fail the call.
+ *
+ * `accepted` indexes back into the caller's array so the outcome rows the
+ * model sees keep its own numbering.
  */
 export function parseWordEditsInput(
   input: Record<string, unknown>,
-): { ok: true; edits: WordEditRequest[] } | { ok: false; error: string } {
+):
+  | {
+      ok: true;
+      edits: WordEditRequest[];
+      accepted: number[];
+      rejected: RejectedWordEdit[];
+    }
+  | { ok: false; error: string } {
   const rawEdits = input.edits;
   if (!Array.isArray(rawEdits) || rawEdits.length === 0) {
     return { ok: false, error: "edits must be a non-empty array" };
@@ -346,106 +482,18 @@ export function parseWordEditsInput(
     };
   }
   const edits: WordEditRequest[] = [];
+  const accepted: number[] = [];
+  const rejected: RejectedWordEdit[] = [];
   for (const [index, raw] of rawEdits.entries()) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      return { ok: false, error: `edits[${index}] must be an object` };
+    const parsed = parseWordEditRow(raw, index);
+    if (!parsed.ok) {
+      rejected.push({ index, error: parsed.error });
+      continue;
     }
-    const row = raw as Record<string, unknown>;
-    if (typeof row.original !== "string" || row.original.length === 0) {
-      return {
-        ok: false,
-        error: `edits[${index}].original must be a non-empty string`,
-      };
-    }
-    // Word's search API cannot match across paragraph breaks and treats ^ as
-    // a wildcard escape — such originals would round-trip to the pane only to
-    // come back as an unexplained skip. Fail fast with the reason instead.
-    if (/[\n\r]/.test(row.original)) {
-      return {
-        ok: false,
-        error:
-          `edits[${index}].original contains a line break. Each original ` +
-          "must be one contiguous passage within a single paragraph; split " +
-          "the change into one edit per paragraph.",
-      };
-    }
-    if (row.original.includes("^")) {
-      return {
-        ok: false,
-        error:
-          `edits[${index}].original contains "^", which Word's search ` +
-          "cannot match literally. Choose a nearby passage without it.",
-      };
-    }
-    if (row.original.length > MAX_ORIGINAL_CHARS) {
-      return {
-        ok: false,
-        error:
-          `edits[${index}].original is ${row.original.length} characters; ` +
-          `keep each original at most ${MAX_ORIGINAL_CHARS}. Use several ` +
-          "smaller, targeted edits instead.",
-      };
-    }
-    // Exactly one of the two change kinds, mirroring the <EDITS> row rule.
-    // A row carrying both is ambiguous about what the card should show; a row
-    // carrying neither is a no-op the pane would silently drop.
-    const hasFormats = Array.isArray(row.formats) && row.formats.length > 0;
-    const hasReplacement = typeof row.replacement === "string";
-    if (hasFormats === hasReplacement) {
-      return {
-        ok: false,
-        error:
-          `edits[${index}] must carry exactly one of "replacement" (text to ` +
-          'put in place, "" to delete) or "formats" (a non-empty list of ' +
-          "formats to apply).",
-      };
-    }
-    let formats: string[] | undefined;
-    if (hasFormats) {
-      const raw = row.formats as unknown[];
-      if (
-        raw.some(
-          (format) =>
-            typeof format !== "string" || !WORD_EDIT_FORMATS.has(format),
-        )
-      ) {
-        return {
-          ok: false,
-          error:
-            `edits[${index}].formats may only contain ` +
-            `${[...WORD_EDIT_FORMATS].join(", ")}.`,
-        };
-      }
-      formats = [...new Set(raw as string[])];
-    } else if ((row.replacement as string).length > MAX_REPLACEMENT_CHARS) {
-      return {
-        ok: false,
-        error: `edits[${index}].replacement exceeds ${MAX_REPLACEMENT_CHARS} characters`,
-      };
-    }
-    if (
-      row.occurrence !== undefined &&
-      row.occurrence !== null &&
-      row.occurrence !== "all"
-    ) {
-      return {
-        ok: false,
-        error: `edits[${index}].occurrence must be "all" or omitted`,
-      };
-    }
-    const reason =
-      typeof row.reason === "string" && row.reason.trim()
-        ? row.reason.trim().slice(0, MAX_REASON_CHARS)
-        : undefined;
-    edits.push({
-      original: row.original,
-      replacement: hasReplacement ? (row.replacement as string) : "",
-      ...(formats ? { formats } : {}),
-      ...(row.occurrence === "all" ? { occurrence: "all" as const } : {}),
-      ...(reason ? { reason } : {}),
-    });
+    edits.push(parsed.edit);
+    accepted.push(index);
   }
-  return { ok: true, edits };
+  return { ok: true, edits, accepted, rejected };
 }
 
 // "unknown" is deliberately absent: only this module may synthesize it, via
@@ -748,6 +796,18 @@ export function createWordClientToolsAdapter(params: {
       // the pane never saw this call and will not have counted it either.
       return { content: JSON.stringify({ error: parsed.error }), events: [] };
     }
+    // Rejected rows never reach the pane, so they get no card and no block
+    // index; they are merged back into the report at their own index purely
+    // so the model can see which of its edits to resend.
+    const rejectedOutcomes: WordClientEditOutcome[] = parsed.rejected.map(
+      ({ index, error }) => ({ index, status: "error", error }),
+    );
+    if (parsed.edits.length === 0) {
+      return {
+        content: JSON.stringify(buildApplyResultPayload(rejectedOutcomes)),
+        events: [],
+      };
+    }
     const firstBlockIndex = nextBlockIndex;
     nextBlockIndex += parsed.edits.length;
     let clientResult: unknown;
@@ -770,9 +830,15 @@ export function createWordClientToolsAdapter(params: {
         events: editBlockEvents(parsed.edits, firstBlockIndex),
       };
     }
-    const outcomes = normalizeEditOutcomes(parsed.edits, clientResult);
+    const outcomes = normalizeEditOutcomes(parsed.edits, clientResult).map(
+      (outcome) => ({ ...outcome, index: parsed.accepted[outcome.index] }),
+    );
     return {
-      content: JSON.stringify(buildApplyResultPayload(outcomes)),
+      content: JSON.stringify(
+        buildApplyResultPayload(
+          [...outcomes, ...rejectedOutcomes].sort((a, b) => a.index - b.index),
+        ),
+      ),
       events: editBlockEvents(parsed.edits, firstBlockIndex),
     };
   };
