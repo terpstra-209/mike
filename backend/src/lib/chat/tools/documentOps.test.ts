@@ -11,7 +11,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   }),
 }));
 
-import { extractPdfText } from "./documentOps";
+import { duplicateReadDocumentResult, extractPdfText } from "./documentOps";
 
 describe("extractPdfText", () => {
   it("includes filled AcroForm field values alongside page text", async () => {
@@ -45,5 +45,42 @@ describe("extractPdfText", () => {
 
     expect(text).toContain("Visible text");
     expect(text).not.toContain("form fields");
+  });
+});
+
+describe("duplicateReadDocumentResult", () => {
+  const parsed = () =>
+    JSON.parse(
+      duplicateReadDocumentResult({
+        docLabel: "doc-2",
+        documentId: "abc",
+        versionId: "v1",
+      }),
+    ) as Record<string, unknown>;
+
+  it("carries no content key", () => {
+    // The regression this guards: prose in "content" — where document text
+    // belongs — read as a malfunction. Models re-called read_document, got
+    // the same sentence, and looped until the step cap ended the turn. One
+    // Gemini turn read a single file 29 times.
+    expect(parsed()).not.toHaveProperty("content");
+  });
+
+  it("says retrying cannot help, which is what breaks the loop", () => {
+    const result = parsed();
+    expect(String(result.explanation)).toMatch(/not a truncation/i);
+    expect(String(result.next_required_action)).toMatch(
+      /Do NOT call read_document for this document again/,
+    );
+  });
+
+  it("still identifies the document it is standing in for", () => {
+    expect(parsed()).toMatchObject({
+      ok: true,
+      already_read: true,
+      doc_id: "doc-2",
+      document_id: "abc",
+      version_id: "v1",
+    });
   });
 });
